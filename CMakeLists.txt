@@ -38,7 +38,6 @@ else()
   find_package(Perl REQUIRED)
   find_program(GO_EXECUTABLE go)
 endif()
-
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   find_package(PkgConfig QUIET)
   if (PkgConfig_FOUND)
@@ -51,10 +50,6 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
   else()
     message("pkgconfig not found. Disabling unwind tests.")
   endif()
-endif()
-
-if(NOT GO_EXECUTABLE)
-  message(FATAL_ERROR "Could not find Go")
 endif()
 
 if(USE_CUSTOM_LIBCXX)
@@ -78,6 +73,9 @@ foreach(VAR CMAKE_C_FLAGS CMAKE_CXX_FLAGS CMAKE_ASM_FLAGS)
 endforeach()
 
 if(BORINGSSL_PREFIX AND BORINGSSL_PREFIX_SYMBOLS)
+  if(NOT GO_EXECUTABLE)
+    message(FATAL_ERROR "Could not find Go")
+  endif()
   add_definitions(-DBORINGSSL_PREFIX=${BORINGSSL_PREFIX})
   # CMake automatically connects include_directories to the NASM command-line,
   # but not add_definitions.
@@ -547,29 +545,33 @@ if(USE_CUSTOM_LIBCXX)
   target_link_libraries(libcxx libcxxabi)
 endif()
 
-# Add minimal googletest targets. The provided one has many side-effects, and
-# googletest has a very straightforward build.
-add_library(boringssl_gtest third_party/googletest/src/gtest-all.cc)
-target_include_directories(boringssl_gtest PRIVATE third_party/googletest)
+if(ENABLE_TESTS)
+  # Add minimal googletest targets. The provided one has many side-effects, and
+  # googletest has a very straightforward build.
+  add_library(boringssl_gtest third_party/googletest/src/gtest-all.cc)
+  target_include_directories(boringssl_gtest PRIVATE third_party/googletest)
 
-include_directories(third_party/googletest/include)
+  include_directories(third_party/googletest/include)
 
-# Declare a dummy target to build all unit tests. Test targets should inject
-# themselves as dependencies next to the target definition.
-add_custom_target(all_tests)
+  # Declare a dummy target to build all unit tests. Test targets should inject
+  # themselves as dependencies next to the target definition.
+  add_custom_target(all_tests)
 
-add_custom_command(
-  OUTPUT crypto_test_data.cc
-  COMMAND ${GO_EXECUTABLE} run util/embed_test_data.go ${CRYPTO_TEST_DATA} >
-  ${CMAKE_CURRENT_BINARY_DIR}/crypto_test_data.cc
-  DEPENDS util/embed_test_data.go ${CRYPTO_TEST_DATA}
-  WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
+  add_custom_command(
+    OUTPUT crypto_test_data.cc
+    COMMAND ${GO_EXECUTABLE} run util/embed_test_data.go ${CRYPTO_TEST_DATA} >
+    ${CMAKE_CURRENT_BINARY_DIR}/crypto_test_data.cc
+    DEPENDS util/embed_test_data.go ${CRYPTO_TEST_DATA}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR})
 
-add_library(crypto_test_data OBJECT crypto_test_data.cc)
+  add_library(crypto_test_data OBJECT crypto_test_data.cc)
+endif()
 
 add_subdirectory(crypto)
 add_subdirectory(ssl)
-add_subdirectory(ssl/test)
+if(ENABLE_TESTS)
+  add_subdirectory(ssl/test)
+endif()
 add_subdirectory(fipstools)
 add_subdirectory(tool)
 add_subdirectory(decrepit)
@@ -586,22 +588,28 @@ if(FUZZ)
   add_subdirectory(fuzz)
 endif()
 
-if(NOT ${CMAKE_VERSION} VERSION_LESS "3.2")
-  # USES_TERMINAL is only available in CMake 3.2 or later.
-  set(MAYBE_USES_TERMINAL USES_TERMINAL)
-endif()
+if(ENABLE_TESTS)
+  if(NOT GO_EXECUTABLE)
+    message(FATAL_ERROR "Could not find Go")
+  endif()
 
-if(UNIX AND NOT APPLE AND NOT ANDROID)
-  set(HANDSHAKER_ARGS "-handshaker-path" $<TARGET_FILE:handshaker>)
-endif()
+  if(NOT ${CMAKE_VERSION} VERSION_LESS "3.2")
+    # USES_TERMINAL is only available in CMake 3.2 or later.
+    set(MAYBE_USES_TERMINAL USES_TERMINAL)
+  endif()
 
-add_custom_target(
+  if(UNIX AND NOT APPLE AND NOT ANDROID)
+    set(HANDSHAKER_ARGS "-handshaker-path" $<TARGET_FILE:handshaker>)
+  endif()
+
+  add_custom_target(
     run_tests
     COMMAND ${GO_EXECUTABLE} run util/all_tests.go -build-dir
-            ${CMAKE_BINARY_DIR}
+    ${CMAKE_BINARY_DIR}
     COMMAND cd ssl/test/runner &&
-            ${GO_EXECUTABLE} test -shim-path $<TARGET_FILE:bssl_shim>
-              ${HANDSHAKER_ARGS} ${RUNNER_ARGS}
+    ${GO_EXECUTABLE} test -shim-path $<TARGET_FILE:bssl_shim>
+    ${HANDSHAKER_ARGS} ${RUNNER_ARGS}
     WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
     DEPENDS all_tests bssl_shim handshaker
     ${MAYBE_USES_TERMINAL})
+endif()
